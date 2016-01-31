@@ -2077,7 +2077,7 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
 
 
     if (input != NULL) {
-        uint32_t inputDevice = input->devices();
+        uint32_t inputDevice = input->devices() & ~AUDIO_DEVICE_BIT_IN;
         LOGI("do input routing device %x\n", inputDevice);
         // ignore routing device information when we start a recording in voice
         // call
