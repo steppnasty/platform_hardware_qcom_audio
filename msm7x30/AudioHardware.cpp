@@ -2106,6 +2106,10 @@ status_t AudioHardware::doRouting(AudioStreamInMSM72xx *input)
                     LOGI("Routing audio to Wired Headset\n");
                     sndDevice = SND_DEVICE_HEADSET;
                 }
+            } else if (inputDevice & AUDIO_DEVICE_IN_BUILTIN_MIC ||
+                    inputDevice & AUDIO_DEVICE_IN_BACK_MIC) {
+                    LOGI("Routing audio to Back Mic\n");
+                    sndDevice = SND_DEVICE_HANDSET_BACK_MIC;
             } else {
                 if (outputDevices & AUDIO_DEVICE_OUT_EARPIECE) {
                     LOGI("Routing audio to Handset\n");
