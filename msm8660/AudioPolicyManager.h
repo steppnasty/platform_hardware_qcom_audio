@@ -1,6 +1,8 @@
 /*
  * Copyright (C) 2009 The Android Open Source Project
- * Copyright (C) 2010-2011, Code Aurora Forum. All rights reserved.
+ * Copyright (c) 2009, 2011-2013, The Linux Foundation. All rights reserved.
+ * Not a Contribution, Apache license notifications and license are retained
+ * for attribution purposes only.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,14 +17,14 @@
  * limitations under the License.
  */
 
-
 #include <stdint.h>
 #include <sys/types.h>
+#include <cutils/config_utils.h>
+#include <cutils/misc.h>
 #include <utils/Timers.h>
 #include <utils/Errors.h>
 #include <utils/KeyedVector.h>
 #include <hardware_legacy/AudioPolicyManagerBase.h>
-
 
 namespace android_audio_legacy {
 
@@ -32,20 +34,24 @@ class AudioPolicyManager: public AudioPolicyManagerBase
 public:
                 AudioPolicyManager(AudioPolicyClientInterface *clientInterface)
                 : AudioPolicyManagerBase(clientInterface) {
-#ifdef WITH_QCOM_LPA
-                    mLPADecodeOutput = -1;
-                    mLPAMuted = false;
-                    mLPAStreamType = AudioSystem::DEFAULT;
-#endif
                 }
 
         virtual ~AudioPolicyManager() {}
 
         // AudioPolicyInterface
-        virtual status_t setDeviceConnectionState(AudioSystem::audio_devices device,
+        virtual status_t setDeviceConnectionState(audio_devices_t device,
                                                           AudioSystem::device_connection_state state,
                                                           const char *device_address);
-        virtual void setPhoneState(int state);
+        virtual AudioSystem::device_connection_state getDeviceConnectionState(audio_devices_t device,
+                                                                              const char *device_address);
+        virtual audio_io_handle_t getInput(int inputSource,
+                                            uint32_t samplingRate,
+                                            uint32_t format,
+                                            uint32_t channels,
+                                            AudioSystem::audio_in_acoustics acoustics);
+
+        // indicates to the audio policy manager that the input starts being used.
+        virtual status_t startInput(audio_io_handle_t input);
 
         // return appropriate device for streams handled by the specified strategy according to current
         // phone state, connected devices...
@@ -57,50 +63,51 @@ public:
         // "future" device selection (fromCache == false) when called from a context
         //  where conditions are changing (setDeviceConnectionState(), setPhoneState()...) AND
         //  before updateDeviceForStrategy() is called.
-        virtual uint32_t getDeviceForStrategy(routing_strategy strategy, bool fromCache = true);
-#ifdef WITH_QCOM_LPA
-        virtual audio_io_handle_t getSession(AudioSystem::stream_type stream,
-                                            uint32_t format,
-                                            AudioSystem::output_flags flags,
-                                            int32_t  sessionId);
-        virtual void pauseSession(audio_io_handle_t output, AudioSystem::stream_type stream);
-        virtual void resumeSession(audio_io_handle_t output, AudioSystem::stream_type stream);
-        virtual void releaseSession(audio_io_handle_t output);
-#endif
         virtual status_t startOutput(audio_io_handle_t output, AudioSystem::stream_type stream, int session = 0);
         virtual status_t stopOutput(audio_io_handle_t output, AudioSystem::stream_type stream, int session = 0);
         virtual void setForceUse(AudioSystem::force_use usage, AudioSystem::forced_config config);
-        status_t startInput(audio_io_handle_t input);
 
 protected:
-        // true is current platform implements a back microphone
-        virtual bool hasBackMicrophone() const {
-#ifdef BACK_MIC_CAMCORDER
-                return true;
-#else
-                return false;
-#endif
-        }
-#ifdef WITH_A2DP
-        // true is current platform supports suplication of notifications and ringtones over A2DP output
-        virtual bool a2dpUsedForSonification() const { return true; }
-#endif
-        // change the route of the specified output
-        void setOutputDevice(audio_io_handle_t output, uint32_t device, bool force = false, int delayMs = 0);
-        // check that volume change is permitted, compute and send new volume to audio hardware
-        status_t checkAndSetVolume(int stream, int index, audio_io_handle_t output, uint32_t device, int delayMs = 0, bool force = false);
-        // select input device corresponding to requested audio source
-        virtual uint32_t getDeviceForInputSource(int inputSource);
-        // Mute or unmute the stream on the specified output
-        void setStreamMute(int stream, bool on, audio_io_handle_t output, int delayMs = 0);
-        status_t stopInput(audio_io_handle_t input);
-#ifdef WITH_QCOM_LPA
-        audio_io_handle_t mLPADecodeOutput;           // active output handler
-        audio_io_handle_t mLPAActiveOuput;           // LPA Output Handler during inactive state
 
-        bool    mLPAMuted;
-        AudioSystem::stream_type  mLPAStreamType;
-        AudioSystem::stream_type  mLPAActiveStreamType;
-#endif
+ virtual audio_devices_t getDeviceForStrategy(routing_strategy strategy, bool fromCache = true);
+        // change the route of the specified output
+        uint32_t setOutputDevice(audio_io_handle_t output, audio_devices_t device, bool force = false, int delayMs = 0);
+
+        // when a device is connected, checks if an open output can be routed
+        // to this device. If none is open, tries to open one of the available outputs.
+        // Returns an output suitable to this device or 0.
+        // when a device is disconnected, checks if an output is not used any more and
+        // returns its handle if any.
+        // transfers the audio tracks and effects from one output thread to another accordingly.
+        status_t checkOutputsForDevice(audio_devices_t device,
+                                       AudioSystem::device_connection_state state,
+                                       SortedVector<audio_io_handle_t>& outputs);
+
+        virtual AudioPolicyManagerBase::IOProfile* getProfileForDirectOutput(
+                                                     audio_devices_t device,
+                                                     uint32_t samplingRate,
+                                                     uint32_t format,
+                                                     uint32_t channelMask,
+                                                     audio_output_flags_t flags);
+
+
+        bool    isCompatibleProfile(AudioPolicyManagerBase::IOProfile *profile,
+                                    audio_devices_t device,
+                                    uint32_t samplingRate,
+                                    uint32_t format,
+                                    uint32_t channelMask,
+                                    audio_output_flags_t flags);
+
+        // check that volume change is permitted, compute and send new volume to audio hardware
+        status_t checkAndSetVolume(int stream, int index, audio_io_handle_t output, audio_devices_t device, int delayMs = 0, bool force = false);
+        // select input device corresponding to requested audio source
+        virtual audio_devices_t getDeviceForInputSource(int inputSource);
+
+
+
+private:
+        // updates device caching and output for streams that can influence the
+        //    routing of notifications
+        void handleNotificationRoutingForStream(AudioSystem::stream_type stream);
 };
-};
+}; //namespace
